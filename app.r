@@ -1,5 +1,7 @@
 # install.packages("fastDummies")
 library(fastDummies)
+library(leaps)
+library(glmnet)
 
 data <- read.csv("Final-project-for-Modern-Regression/Airbnb_Open_Data.csv")
 
@@ -47,10 +49,76 @@ sum(is.na(data))
 
 dim(data)
 
+# Change review.rate.number to binary variable
+colnames(data)[7] = "good_review"
+data$good_review[data$good_review < 4] <- 0
+data$good_review[data$good_review >= 4] <- 1
+
 attach(data)
 
 
 # MLR #########################################################################
+
+# Split data
+train  <- 1:56108
+test   <- 56109:70136
+test2  <- data[test, ]
+mlr.target <- price[test]
+
+
+# Use Lasso to perform shrinkage and variable selection
+x <- model.matrix(price ~ ., data = data)[, -1]
+y <- data$price
+
+mlr.lasso.mod <- glmnet(x[train, ], price[train], alpha = 1)
+plot(mlr.lasso.mod)
+
+set.seed(1)
+mlr.cv.out <- cv.glmnet(x[train , ], y[train], alpha = 1)
+plot(mlr.cv.out)
+mlr.bestlam <- mlr.cv.out$lambda.min
+mlr.lasso.pred <- predict(mlr.lasso.mod, s = mlr.bestlam, newx = x[test, ])
+mean((mlr.lasso.pred - mlr.target)^2)
+mlr.out <- glmnet(x, y, alpha = 1)
+mlr.lasso.coef <- predict(mlr.out, type = "coefficients", s = mlr.bestlam)[1:43, ]
+mlr.lasso.coef[mlr.lasso.coef != 0]
+
+# Perform subset selection
+mlr.regfit <- regsubsets(price ~ .,
+                         data = data,
+                         nvmax = 25)
+mlr.regfit.summary <- summary(mlr.regfit)
+par(mfrow = c(1, 3))
+plot(mlr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l", col = "red")
+plot(mlr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l", col = "blue")
+plot(mlr.regfit)
+coef(mlr.regfit, 10)
+
+predict.regsubsets <- function(object , newdata , id, ...) {
+  form <- as.formula(object$call [[2]])
+  mat <- model.matrix(form , newdata)
+  coefi <- coef(object , id = id)
+  xvars <- names(coefi)
+  mat[, xvars] %*% coefi
+}
+
+k = 10
+n <- nrow(data)
+set.seed (1)
+folds <- sample(rep (1:k, length = n))
+mlr.cv.errors <- matrix(NA, k, 25, dimnames = list(NULL , paste (1:25)))
+
+for (j in 1:k) {
+  mlr.regfit.cv <- regsubsets(price ~ ., data = data[folds != j, ], nvmax = 25)
+  for (i in 1:25) {
+    pred <- predict.regsubsets(mlr.regfit.cv , data[folds == j, ], id = i)
+    mlr.cv.errors[j,i] <- mean (( data$price[folds == j] - pred)^2)
+  }
+}
+
+mlr.cv.errors <- apply(mlr.cv.errors , 2, mean)
+mlr.cv.errors
+which.min(mlr.cv.errors)
 
 # Fit MLR model
 mlr.fit <- lm(price ~ .,
@@ -67,7 +135,7 @@ df.predict <- data.frame(Construction.year=as.character(2017),
                          minimum.nights=1,
                          number.of.reviews=9,
                          reviews.per.month=2.84,
-                         review.rate.number=4,
+                         good_review=1,
                          calculated.host.listings.count=2,
                          availability.365=22,
                          host_identity_verified_unconfirmed=as.character(1),
@@ -96,13 +164,28 @@ predict(mlr.fit, df.predict, interval = "prediction")
 
 # CLASSIFICATION ##############################################################
 
-# Split data
-train  <- 1:56108
-test   <- data[56109:70136, ]
-target <- review.rate.number[56109:70136]
+lr.target <- good_review[56109:70136]
+
+# Perform subset selection
+lr.regfit <- regsubsets(good_review ~ .,
+                        data = data,
+                        nvmax = 25,
+                        method = "backward")
+lr.regfit.summary <- summary(lr.regfit)
+par(mfrow = c(1, 2))
+plot(lr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l")
+plot(lr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l")
+plot(lr.regfit, scale = "Cp")
+which.min(lr.regfit.summary$bic)
+coef(lr.regfit, 4)
 
 # Fit model
-lr.fit <- glm(review.rate.number ~ .,
+lr.fit <- glm(good_review ~ .,
               data = data,
               family = "binomial",
               subset = train)
+
+# Perform 5-Fold CV Validation
+lr.5cv <- cv.glm(train, lr.fit, K=5)
+lr.5cv$delta
+
