@@ -5,10 +5,6 @@ library(glmnet)
 
 data <- read.csv("Final-project-for-Modern-Regression/Airbnb_Open_Data.csv")
 
-dim(data)
-names(data)
-
-
 # DATA CLEANING ###############################################################
 
 # Create dummy variables
@@ -17,12 +13,9 @@ data <- dummy_cols(data,
                                       "neighbourhood.group",
                                       "cancellation_policy",
                                       "room.type"))
-dim(data)
 
 # Remove irrelevant and repeat columns
 data <- data[, -c(1:14, 20, 25:27, 34, 38)]
-dim(data)
-head(data) 
 
 # Rename columns to remove spaces
 colnames(data)[18] = "neighbourhood.group_Staten_Island"
@@ -33,7 +26,6 @@ colnames(data)[25] = "room.type_Shared_room"
 
 # Remove dollar signs from data$price and data$service.fee
 data[] <- lapply(data, gsub, pattern="$", fixed=TRUE, replacement="")
-head(data)
 
 # Convert character types to numeric
 char_to_num <- c(2:9)
@@ -43,11 +35,7 @@ for (i in char_to_num) {
 }
 
 # Remove rows with null values
-sum(is.na(data))
 data <- na.omit(data)
-sum(is.na(data))
-
-dim(data)
 
 # Change review.rate.number to binary variable
 colnames(data)[7] = "good_review"
@@ -60,11 +48,10 @@ attach(data)
 # MLR #########################################################################
 
 # Split data
-train  <- 1:56108
-test   <- 56109:70136
-test2  <- data[test, ]
+train      <- 1:56108
+test       <- 56109:70136
+test2      <- data[test, ]
 mlr.target <- price[test]
-
 
 # Use Lasso to perform shrinkage and variable selection
 x <- model.matrix(price ~ ., data = data)[, -1]
@@ -77,21 +64,26 @@ set.seed(1)
 mlr.cv.out <- cv.glmnet(x[train , ], y[train], alpha = 1)
 plot(mlr.cv.out)
 mlr.bestlam <- mlr.cv.out$lambda.min
+
 mlr.lasso.pred <- predict(mlr.lasso.mod, s = mlr.bestlam, newx = x[test, ])
 mean((mlr.lasso.pred - mlr.target)^2)
+
 mlr.out <- glmnet(x, y, alpha = 1)
 mlr.lasso.coef <- predict(mlr.out, type = "coefficients", s = mlr.bestlam)[1:43, ]
 mlr.lasso.coef[mlr.lasso.coef != 0]
+# This works but our only feature != 0 is service.fee
 
-# Perform subset selection
+# Attempting subset selection to verify Lasso results
 mlr.regfit <- regsubsets(price ~ .,
                          data = data,
+                         nbest = 1,
                          nvmax = 25)
 mlr.regfit.summary <- summary(mlr.regfit)
+
 par(mfrow = c(1, 3))
+plot(mlr.regfit)
 plot(mlr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l", col = "red")
 plot(mlr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l", col = "blue")
-plot(mlr.regfit)
 coef(mlr.regfit, 10)
 
 predict.regsubsets <- function(object , newdata , id, ...) {
@@ -109,7 +101,7 @@ folds <- sample(rep (1:k, length = n))
 mlr.cv.errors <- matrix(NA, k, 25, dimnames = list(NULL , paste (1:25)))
 
 for (j in 1:k) {
-  mlr.regfit.cv <- regsubsets(price ~ ., data = data[folds != j, ], nvmax = 25)
+  mlr.regfit.cv <- regsubsets(price ~ ., data = data[folds != j, ], nvmax = 25, method = "forward")
   for (i in 1:25) {
     pred <- predict.regsubsets(mlr.regfit.cv , data[folds == j, ], id = i)
     mlr.cv.errors[j,i] <- mean (( data$price[folds == j] - pred)^2)
@@ -121,8 +113,9 @@ mlr.cv.errors
 which.min(mlr.cv.errors)
 
 # Fit MLR model
-mlr.fit <- lm(price ~ .,
+mlr.fit <- lm(price ~ service.fee,
               data = data)
+plot(mlr.fit)
 
 # Choose random observation to predict
 random <- floor(runif(1, min=1, max=70136)) # 51452
@@ -166,21 +159,45 @@ predict(mlr.fit, df.predict, interval = "prediction")
 
 lr.target <- good_review[56109:70136]
 
+# Use Lasso to perform shrinkage and variable selection
+x <- model.matrix(good_review ~ ., data = data)[, -1]
+y <- data$good_review
+
+lr.lasso.mod <- glmnet(x[train, ], good_review[train], alpha = 1)
+plot(lr.lasso.mod)
+
+set.seed(1)
+lr.cv.out <- cv.glmnet(x[train , ], y[train], alpha = 1)
+plot(lr.cv.out)
+lr.bestlam <- lr.cv.out$lambda.min
+
+lr.lasso.pred <- predict(lr.lasso.mod, s = lr.bestlam, newx = x[test, ])
+mean((lr.lasso.pred - lr.target)^2)
+
+lr.out <- glmnet(x, y, alpha = 1)
+lr.lasso.coef <- predict(lr.out, type = "coefficients", s = lr.bestlam)[1:43, ]
+lr.predictors <- names(lr.lasso.coef[lr.lasso.coef != 0])
+
 # Perform subset selection
 lr.regfit <- regsubsets(good_review ~ .,
                         data = data,
-                        nvmax = 25,
-                        method = "backward")
+                        nvmax = 25)
 lr.regfit.summary <- summary(lr.regfit)
+
 par(mfrow = c(1, 2))
+plot(lr.regfit)
 plot(lr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l")
 plot(lr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l")
-plot(lr.regfit, scale = "Cp")
 which.min(lr.regfit.summary$bic)
 coef(lr.regfit, 4)
 
 # Fit model
-lr.fit <- glm(good_review ~ .,
+lr.fit <- glm(good_review ~ Construction.year + number.of.reviews + 
+                            reviews.per.month + calculated.host.listings.count +
+                            availability.365 + neighbourhood.group_brookln +
+                            neighbourhood.group_Queens + 
+                            neighbourhood.group_Staten_Island + 
+                            cancellation_policy_moderate + room.type_Private_room,
               data = data,
               family = "binomial",
               subset = train)
@@ -189,3 +206,11 @@ lr.fit <- glm(good_review ~ .,
 lr.5cv <- cv.glm(train, lr.fit, K=5)
 lr.5cv$delta
 
+# Make predictions using logistic regression
+lr.prob <- predict(lr.fit, test2, type = "response")
+
+lr.pred <- rep(0, 14028)
+lr.pred[lr.prob > .5] <- 1
+
+table(lr.pred, lr.target)
+mean(lr.pred == lr.target)
