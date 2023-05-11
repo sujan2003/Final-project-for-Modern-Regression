@@ -249,3 +249,11 @@ svm_preds <- predict(svm_model, test_data)
 
 # Evaluate performance
 confusionMatrix(svm_preds, test_data$good_review)
+
+# Data Analysis on good_review and construction year
+test_test <- table(good_review,Construction.year)
+prop.table(test_test,1)  
+barplot(prop.table(test_test, 2))
+
+
+
