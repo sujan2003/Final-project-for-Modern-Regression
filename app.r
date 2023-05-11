@@ -1,11 +1,15 @@
-# install.packages("fastDummies")
 library(fastDummies)
+library(corrplot)
 library(leaps)
 library(glmnet)
+library(boot)
+library(tree)
+library(randomForest)
 
 data <- read.csv("Final-project-for-Modern-Regression/Airbnb_Open_Data.csv")
 
-# DATA CLEANING ###############################################################
+
+# DATA CLEANING ################################################################
 
 # Create dummy variables
 data <- dummy_cols(data,
@@ -45,7 +49,20 @@ data$good_review[data$good_review >= 4] <- 1
 attach(data)
 
 
-# MLR #########################################################################
+# DATA EXPLORATION #############################################################
+
+# Find the correlation between only numeric features
+numeric_features = data.frame(price, service.fee, minimum.nights, 
+                              number.of.reviews, reviews.per.month, good_review, 
+                              calculated.host.listings.count, availability.365)
+num_correlations <- cor(numeric_features)
+corrplot(num_correlations,
+         title = "Correlation of Numeric Features",
+         tl.col = "black",
+         mar = c(0,0,2,0))
+
+
+# MLR ##########################################################################
 
 # Split data
 train      <- 1:56108
@@ -81,41 +98,17 @@ mlr.regfit <- regsubsets(price ~ .,
 mlr.regfit.summary <- summary(mlr.regfit)
 
 par(mfrow = c(1, 3))
-plot(mlr.regfit)
-plot(mlr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l", col = "red")
-plot(mlr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l", col = "blue")
+plot(mlr.regfit, main = "Variable Selection")
+plot(mlr.regfit.summary$rss, main="# of Variables vs RSS", xlab="Number of Variables", ylab="RSS", type = "l", col = "red")
+plot(mlr.regfit.summary$rsq, main="# of Variables vs RSq", xlab="Number of Variables", ylab="RSq", type = "l", col = "blue")
 coef(mlr.regfit, 10)
-
-predict.regsubsets <- function(object , newdata , id, ...) {
-  form <- as.formula(object$call [[2]])
-  mat <- model.matrix(form , newdata)
-  coefi <- coef(object , id = id)
-  xvars <- names(coefi)
-  mat[, xvars] %*% coefi
-}
-
-k = 10
-n <- nrow(data)
-set.seed (1)
-folds <- sample(rep (1:k, length = n))
-mlr.cv.errors <- matrix(NA, k, 25, dimnames = list(NULL , paste (1:25)))
-
-for (j in 1:k) {
-  mlr.regfit.cv <- regsubsets(price ~ ., data = data[folds != j, ], nvmax = 25, method = "forward")
-  for (i in 1:25) {
-    pred <- predict.regsubsets(mlr.regfit.cv , data[folds == j, ], id = i)
-    mlr.cv.errors[j,i] <- mean (( data$price[folds == j] - pred)^2)
-  }
-}
-
-mlr.cv.errors <- apply(mlr.cv.errors , 2, mean)
-mlr.cv.errors
-which.min(mlr.cv.errors)
 
 # Fit MLR model
 mlr.fit <- lm(price ~ service.fee,
               data = data)
-plot(mlr.fit)
+par(mfrow = c(2,4))
+plot(mlr.fit, main = "MLR Diagnostic Plot")
+summary(mlr.fit)
 
 # Choose random observation to predict
 random <- floor(runif(1, min=1, max=70136)) # 51452
@@ -154,8 +147,20 @@ predict(mlr.fit, df.predict) # 314.9686
 predict(mlr.fit, df.predict, interval = "confidence")
 predict(mlr.fit, df.predict, interval = "prediction")
 
+# Find model MSE
+mlr.fit.pred <- predict(mlr.fit, test2)
+mean((mlr.fit.pred - mlr.target)^2) # 2.0148
 
-# CLASSIFICATION ##############################################################
+# Predict price using decision tree
+tree.mlr <- tree(price ~ .,
+                 data,
+                 subset = train)
+predict(tree.mlr, df.predict) # 352.8062
+tree.mlr.pred <- predict(tree.mlr, test2)
+mean((tree.mlr.pred - mlr.target)^2) # 1184.596
+
+
+# CLASSIFICATION ###############################################################
 
 lr.target <- good_review[56109:70136]
 
@@ -164,7 +169,7 @@ x <- model.matrix(good_review ~ ., data = data)[, -1]
 y <- data$good_review
 
 lr.lasso.mod <- glmnet(x[train, ], good_review[train], alpha = 1)
-plot(lr.lasso.mod)
+plot(lr.lasso.mod, main = "Lasso Shrinkage for Logistic Regression")
 
 set.seed(1)
 lr.cv.out <- cv.glmnet(x[train , ], y[train], alpha = 1)
@@ -177,34 +182,20 @@ mean((lr.lasso.pred - lr.target)^2)
 lr.out <- glmnet(x, y, alpha = 1)
 lr.lasso.coef <- predict(lr.out, type = "coefficients", s = lr.bestlam)[1:43, ]
 lr.predictors <- names(lr.lasso.coef[lr.lasso.coef != 0])
-
-# Perform subset selection
-lr.regfit <- regsubsets(good_review ~ .,
-                        data = data,
-                        nvmax = 25)
-lr.regfit.summary <- summary(lr.regfit)
-
-par(mfrow = c(1, 2))
-plot(lr.regfit)
-plot(lr.regfit.summary$rss , xlab = "Number of Variables",ylab = "RSS", type = "l")
-plot(lr.regfit.summary$rsq , xlab = "Number of Variables", ylab = "RSq", type = "l")
-which.min(lr.regfit.summary$bic)
-coef(lr.regfit, 4)
+lr.predictors
 
 # Fit model
 lr.fit <- glm(good_review ~ Construction.year + number.of.reviews + 
-                            reviews.per.month + calculated.host.listings.count +
-                            availability.365 + neighbourhood.group_brookln +
-                            neighbourhood.group_Queens + 
-                            neighbourhood.group_Staten_Island + 
-                            cancellation_policy_moderate + room.type_Private_room,
+                reviews.per.month + calculated.host.listings.count +
+                availability.365 + neighbourhood.group_brookln +
+                neighbourhood.group_Queens + 
+                neighbourhood.group_Staten_Island + 
+                cancellation_policy_moderate + room.type_Private_room,
               data = data,
               family = "binomial",
               subset = train)
-
-# Perform 5-Fold CV Validation
-lr.5cv <- cv.glm(train, lr.fit, K=5)
-lr.5cv$delta
+summary(lr.fit)
+plot(lr.fit, main = "LR Diagnostic Plot")
 
 # Make predictions using logistic regression
 lr.prob <- predict(lr.fit, test2, type = "response")
@@ -213,6 +204,24 @@ lr.pred <- rep(0, 14028)
 lr.pred[lr.prob > .5] <- 1
 
 table(lr.pred, lr.target)
+mean(lr.pred == lr.target) # 0.5507556
+
+# Predict good_review using decision tree
+rf.lr <- randomForest(good_review ~ Construction.year + number.of.reviews + 
+                        reviews.per.month + calculated.host.listings.count +
+                        availability.365 + neighbourhood.group_brookln +
+                        neighbourhood.group_Queens + 
+                        neighbourhood.group_Staten_Island + 
+                        cancellation_policy_moderate + room.type_Private_room,
+                      data = data,
+                      subset = train,
+                      importance = TRUE)
+rf.lr.prob <- predict(rf.lr, test2, type = "class")
+rf.lr.pred <- rep(0, 14028)
+rf.lr.pred[rf.lr.prob > .5] <- 1
+table(rf.lr.pred, lr.target)
+mean(rf.lr.pred == lr.target) # 0.8952096
+varImpPlot(rf.lr)
 mean(lr.pred == lr.target)
 
 
@@ -259,4 +268,3 @@ kmeans_model <- kmeans(scaled_data, centers = 4)
 # Visualize the clusters using the first two principal components
 pca <- prcomp(scaled_data)
 plot(pca$x[, 1], pca$x[, 2], col = kmeans_model$cluster)
-
