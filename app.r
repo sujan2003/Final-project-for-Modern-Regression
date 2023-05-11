@@ -227,44 +227,25 @@ mean(lr.pred == lr.target)
 
 
 ###########SVM####################
-# we want to classify the good_review column
-
-# install.packages("e1071")
 library(e1071)
+library(caret)
+library(tidyverse)
 
-# Convert good_review to a factor
-data$good_review <- as.factor(data$good_review)
-
-# Split the data into training and testing sets
-train <- sample(nrow(data), nrow(data) * 0.7)
-train_data <- data[train, ]
-test_data <- data[-train, ]
-
-# Train the SVM model using a radial basis function kernel
-svm_model <- svm(good_review ~ ., data = train_data, kernel = "radial")
-
-# Predict the labels for the test data
-predicted_labels <- predict(svm_model, test_data)
-
-# Calculate the accuracy of the model
-accuracy <- mean(predicted_labels == test_data$good_review)
-print(paste("Accuracy:", accuracy))
+# Create binary variable for good reviews
+data$good_review <- ifelse(data$review_scores_rating >= 3, 1, 0)
 
 
-#For clustering, we use the k-means algorithm from the stats library
-# Standardize the data
-scaled_data <- scale(data[, -7])
+# Split data into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(data$good_review, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
 
-# Determine the optimal number of clusters using the elbow method
-wss <- numeric(10)
-for (i in 1:10) {
-  wss[i] <- sum(kmeans(scaled_data, centers = i)$withinss)
-}
-plot(1:10, wss, type = "b", xlab = "Number of Clusters", ylab = "Within-Cluster Sum of Squares")
+# Train SVM model
+svm_model <- svm(good_review ~ ., data = train_data, kernel = "linear", cost = 1, scale = FALSE)
 
-# Cluster the data using k-means with k = 4
-kmeans_model <- kmeans(scaled_data, centers = 4)
+# Predict on test set
+svm_preds <- predict(svm_model, test_data)
 
-# Visualize the clusters using the first two principal components
-pca <- prcomp(scaled_data)
-plot(pca$x[, 1], pca$x[, 2], col = kmeans_model$cluster)
+# Evaluate performance
+confusionMatrix(svm_preds, test_data$good_review)
