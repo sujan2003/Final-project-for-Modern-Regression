@@ -214,3 +214,49 @@ lr.pred[lr.prob > .5] <- 1
 
 table(lr.pred, lr.target)
 mean(lr.pred == lr.target)
+
+
+
+###########SVM####################
+# we want to classify the good_review column
+
+# install.packages("e1071")
+library(e1071)
+
+# Convert good_review to a factor
+data$good_review <- as.factor(data$good_review)
+
+# Split the data into training and testing sets
+train <- sample(nrow(data), nrow(data) * 0.7)
+train_data <- data[train, ]
+test_data <- data[-train, ]
+
+# Train the SVM model using a radial basis function kernel
+svm_model <- svm(good_review ~ ., data = train_data, kernel = "radial")
+
+# Predict the labels for the test data
+predicted_labels <- predict(svm_model, test_data)
+
+# Calculate the accuracy of the model
+accuracy <- mean(predicted_labels == test_data$good_review)
+print(paste("Accuracy:", accuracy))
+
+
+#For clustering, we use the k-means algorithm from the stats library
+# Standardize the data
+scaled_data <- scale(data[, -7])
+
+# Determine the optimal number of clusters using the elbow method
+wss <- numeric(10)
+for (i in 1:10) {
+  wss[i] <- sum(kmeans(scaled_data, centers = i)$withinss)
+}
+plot(1:10, wss, type = "b", xlab = "Number of Clusters", ylab = "Within-Cluster Sum of Squares")
+
+# Cluster the data using k-means with k = 4
+kmeans_model <- kmeans(scaled_data, centers = 4)
+
+# Visualize the clusters using the first two principal components
+pca <- prcomp(scaled_data)
+plot(pca$x[, 1], pca$x[, 2], col = kmeans_model$cluster)
+
